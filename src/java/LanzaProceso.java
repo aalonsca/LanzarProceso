@@ -366,6 +366,7 @@ public class LanzaProceso {
 		if (!"".equals(strServicio) && ("OMS".equals(strServicio) || "BOTH".equals(strServicio))) {
 
 			//abrimos una conexion de Oracle para permitir lanzar procesos 
+			
 			try {
 				DriverManager.registerDriver(new oracle.jdbc.OracleDriver());
 				ORACLE_DRIVER_CLFY = "jdbc:oracle:thin:@" + strJdbc_DB + ":" + strJdbc_Port + ":" + strDBName;
