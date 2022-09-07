@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -1294,7 +1295,7 @@ public class LanzaProceso {
 	private PcProcessDefinition getProcessDetails(Connection conn, String strProcessName) { 
 		
 		PcProcessDefinition pd = null;
-		CallableStatement sqlQuery = null;
+		PreparedStatement sqlQuery = null;
 		
 		ResultSet result = null; 
 		if (getDebugMode()) {
@@ -1309,10 +1310,12 @@ public class LanzaProceso {
 				LanzaProceso.openDBConnection("PC"); // abrimos la sesion para PC
 			}
 			
-			sqlQuery = (CallableStatement) conn.prepareStatement(strQueryProcessDef.replace("%1", strProcessName));
+			sqlQuery = (PreparedStatement) conn.prepareStatement(strQueryProcessDef.replace("%1", strProcessName));
 			result = sqlQuery.executeQuery();
 			
 			if (result.getFetchSize() == 1) {
+				
+				pd.doInitEntity();
 		  		pd.setcId(result.getString(1));
 		  		pd.setlineOfBusiness(result.getString(4));
 		  		pd.setsalesChannel(result.getString(5));
@@ -1434,7 +1437,7 @@ public class LanzaProceso {
 	 */
 	private OmOrder getOmOrderDetails(Connection conn, String orderId) {
 		OmOrder om = null;
-		CallableStatement sqlQuery = null;
+		PreparedStatement sqlQuery = null;
 		ResultSet result = null;
 		
 		if (getDebugMode()) {
@@ -1451,7 +1454,7 @@ public class LanzaProceso {
 	  		om = (OmOrder) OmOrder.create(getStrIDContract());
 	  		om.setclfyOrderIdVal(getStrIDContract());
 
-			sqlQuery = (CallableStatement) conn.prepareStatement(strQueryOmsOrder.replace("%1", orderId));
+			sqlQuery = (PreparedStatement) conn.prepareStatement(strQueryOmsOrder.replace("%1", orderId));
 			result = sqlQuery.executeQuery();
 			
 			if (result.getFetchSize() == 1) {
@@ -1798,7 +1801,7 @@ public class LanzaProceso {
 		
 		StartOrderInput sti = new StartOrderInput();
 
-		CallableStatement sqlQuery = null;
+		PreparedStatement sqlQuery = null;
 		ResultSet result = null;
 		
 		if (getDebugMode()) {
@@ -1812,7 +1815,7 @@ public class LanzaProceso {
 				LanzaProceso.openDBConnection("OMS"); // abrimos la sesion para OMS
 			}
 
-			sqlQuery = (CallableStatement) conn.prepareStatement(strQueryOmsOrder.replace("%1", orderId));
+			sqlQuery = (PreparedStatement) conn.prepareStatement(strQueryOmsOrder.replace("%1", orderId));
 			result = sqlQuery.executeQuery();
 			
 			if (result.getFetchSize() > 0) {			
