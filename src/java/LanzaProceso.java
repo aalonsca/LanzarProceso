@@ -8,11 +8,11 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 
 import javax.naming.InitialContext;
 import javax.rmi.PortableRemoteObject;
@@ -32,7 +32,6 @@ import amdocs.bpm.ejb.ProcMgrSessionHome;
 import amdocs.epi.session.EpiSessionContext;
 import amdocs.epi.session.EpiSessionId;
 import amdocs.epi.util.EpiCollections;
-import amdocs.epi.util.IdGen;
 import amdocs.epi.util.ListSet;
 import amdocs.epi.util.params.StringHolder;
 import amdocs.ofc.process.BaseProcInst;
@@ -43,7 +42,6 @@ import amdocs.ofc.process.ProcessCreateInfo;
 import amdocs.oms.apcore.ApItem;
 import amdocs.oms.bpaproxy.OmsBpaCase;
 import amdocs.oms.cih.mapping.CihOrderActionFilter;
-import amdocs.oms.infra.Factory;
 import amdocs.oms.infra.IlSession;  // ofc.jar
 import amdocs.oms.infra.domains.ActionTypeTP;
 import amdocs.oms.infra.domains.ActionTypeTP.ActionType;
@@ -106,6 +104,18 @@ import com.amdocs.cih.common.datatypes.OrderActionUserAction;
 import com.amdocs.cih.common.datatypes.OrderUserAction;
 import com.clarify.cbo.Session;
 import com.clarify.cbo.SqlExec;
+//++paco
+import java.sql.Statement;
+import amdocs.uams.UamsSecurityException;
+import amdocs.epi.util.IdGen;
+import amdocs.oms.pc.PcProcessDefinitionAug;
+import java.sql.PreparedStatement;
+import java.util.HashMap;
+import amdocs.epi.lock.DistributedLockManager;
+import amdocs.epi.lock.LockManagerFactory;
+import amdocs.epi.datamanager.DataManagerFactory;
+import amdocs.epi.datamanager.DataManagerCls;
+import amdocs.epi.datamanager.DataManager;
 
 
 /**
@@ -191,7 +201,15 @@ public class LanzaProceso {
 	protected PcProcessDefinition processDef = null;
 	
 	protected static boolean DebugMode = false;
+	//++paco
+	protected static HashMap<String, Object> settingMap = new HashMap<String, Object>();
+	protected static Object m_TableNameReplacementConfigObj = null;
+	protected static Object m_PartitionerInitialValueConfigObj = null;
+	protected static Object m_LogTransContentsOnRollbackConfigObj = null;
 	
+	protected static DataManagerFactory dManagerFactory = null;	
+	protected static DataManagerCls DataManager = null;	
+	//--paco
 
 	/**
 	 * Funcion de entrada
@@ -212,10 +230,8 @@ public class LanzaProceso {
 
 		proceso.setStrIDContract(args[0]);
 		proceso.setStrProcessName(args[1]);
-		proceso.setStrVersion(args[2]);
+		proceso.setStrVersion(args[2]);	
 		
-		//leemos la configuracion
-		proceso.getConfiguration();
 		
 		// Lanzamos el proceso
 		if (proceso.execProcess() < 0) {
@@ -229,8 +245,60 @@ public class LanzaProceso {
 	 */
 	public LanzaProceso () {
 	
+		try {
+			//leemos la configuracion
+			LanzaProceso.getConfiguration();			
+			LanzaProceso.setInputSetting();
+			
+		}catch(Exception e) {
+			if (getDebugMode()) {
+				System.out.println("------------------------------------------------------------------------------------------");
+				System.out.println("Error creating LanzaProceso Object.");
+			}
+
+		}
 	}
 
+	
+	private static void setInputSetting() {
+		
+		if (getDebugMode()) {
+			System.out.println("------------------------------------------------------------------------------------------");
+			System.out.println("Creating InputSettings...");
+		}
+		
+		
+		settingMap.put("waitTimeout",500);
+		settingMap.put("BackwardChainingTimeout",500);
+		settingMap.put("AutoStartTransaction",true);
+		settingMap.put("RollbackOnImplicitLockFailure",true);
+		settingMap.put("CacheConnectionDuringQuery",true);
+		settingMap.put("EnableJdbcTracing",true);
+		settingMap.put("ReplaceTableNames",m_TableNameReplacementConfigObj);
+		settingMap.put("PartitionerInitialValue",m_PartitionerInitialValueConfigObj);
+		settingMap.put("LogTransactionContentsOnRollback",m_LogTransContentsOnRollbackConfigObj);
+		settingMap.put("StatisticsLevel",null);
+		settingMap.put("AutoUpdateCrmTransactions", true);
+		settingMap.put("ThreadTransactionIsolation", true);
+		settingMap.put("name", "chioms4");
+		settingMap.put("domainName", "dxint1");
+		settingMap.put("description", "dxint1");
+		settingMap.put("verbose", true);
+		settingMap.put("Mandatory", true);			
+		settingMap.put("delay", 50L);	 
+		settingMap.put("period", 50L);	
+		settingMap.put("iterations", 50L);	
+		settingMap.put("Cron", null);	
+	 	settingMap.put("UseDefaultCalendar", true);	
+
+
+		if (getDebugMode()) {
+			System.out.println("------------------------------------------------------------------------------------------");
+			System.out.println("InputSettings created");
+		}
+
+	}
+	
 
 	/**
 	 * Abre las conexiones con bbdd
@@ -251,7 +319,6 @@ public class LanzaProceso {
 		if (!"".equals(strServicio) && ("OMS".equals(strServicio) || "BOTH".equals(strServicio))) {
 
 			//abrimos una conexion de Oracle para permitir lanzar procesos 
-			
 			try {
 				DriverManager.registerDriver(new oracle.jdbc.OracleDriver());
 				ORACLE_DRIVER_CLFY = "jdbc:oracle:thin:@" + strJdbc_DB + ":" + strJdbc_Port + ":" + strDBName;
@@ -362,7 +429,7 @@ public class LanzaProceso {
 	 * Recoge la configuracion de un fichero .properties
 	 * @throws IOException
 	 */
-	private void getConfiguration() 
+	private static void getConfiguration() 
 			throws IOException, Exception {
 		
 		try {
@@ -461,7 +528,8 @@ public class LanzaProceso {
 			
 			procMgrLocal = (ProcMgrSessionHome) PortableRemoteObject.narrow(objref, ProcMgrSessionHome.class);
 			procSess = procMgrLocal.create();			
-			tPooledId = procSess.createSession();
+			//tPooledId = procSess.createSession();
+			tPooledId = procSess.createProcMgrSession(IdGen.uniqueId());
 
 			if (getDebugMode()) {
 				System.out.println("Session created: ");
@@ -493,16 +561,14 @@ public class LanzaProceso {
 	 */
 	private int execProcess() {
 
-		/* PARA LAS PRUEBAS CON WL CAIDO
 		boolean commit = true;
-		*/
-		
+
 		if (getDebugMode()) {
 			System.out.println("------------------------------------------------------------------------------------------");
 			System.out.println("Entering execProcess ");
 		}
 		
-		/* PARA LAS PRUEBAS CON WL CAIDO
+		 //PARA LAS PRUEBAS CON WL CAIDO
 		if (prepareConnWL() < 0) {
 
 			if (getDebugMode()) {
@@ -511,7 +577,7 @@ public class LanzaProceso {
 
 			return -1;
 		}
-		*/
+		
 		 
 		
 		// Generamos los objetos necesarios para lanzar el proceso asociado a la orden
@@ -519,15 +585,12 @@ public class LanzaProceso {
 	          String caseId = null;
 	          StringHolder caseIdH = new StringHolder(caseId);
 	          	  
-	          /* PARA LAS PRUEBAS CON WL CAIDO
 	          session = (IlSession) EpiSessionContext.findSession(tPooledId);	          
 	          session.startTransaction();  // Llamamos asi, aunque es static, para garantizar que se use la sesion a la que nos hemos conectado
-	          */
+			  
 			  if (getDebugMode()) {
 				System.out.println("Transaction started: ");
-				/* PARA LAS PRUEBAS CON WL CAIDO
 				System.out.println(session.toString());
-				*/
 			  }
 
 	          
@@ -552,8 +615,7 @@ public class LanzaProceso {
 				}
 
       			return -1;
-      		}
-			
+      		}	
 
       		//recuperamos los valores de la orden a partir del id
 			try {
@@ -738,6 +800,193 @@ public class LanzaProceso {
 		return 0;
 	}
 
+	/**
+	 * Lanza el proceso asociado a una order action
+	 * @param sqlQuery
+	 * @param creationInfo
+	 * @param customerID
+	 * @param existingOA
+	 * @param orderActionData
+	 * @return
+	 * @throws OmsDataNotFoundException
+	 * @throws OmsCreateRequestFailedException
+	 * @throws OmsInvalidImplementationException
+	 * @throws OmsInvalidUsageException
+	 */
+	
+	/** @deprecated
+	 */
+	protected StringHolder startProcess(SqlExec sqlQuery, InitialProcessService.OrderActionCreationInfo creationInfo, String customerID, OmOrderAction existingOA, OrderActionData orderActionData)
+		    throws Exception
+	{
+
+		String caseId = null;
+		StringHolder caseIdH = new StringHolder(caseId);
+		
+		if (getDebugMode()) {
+			System.out.println("------------------------------------------------------------------------------------------");
+			System.out.println("Starting process");
+		}
+		
+		
+		try {
+
+			// Generamos la consulta con los datos del proceso a ejecutar
+			sqlQuery.execute(strQueryBPM.replace("%1", getStrProcessName()).replace("%2", getStrVersion()));
+			
+			if (sqlQuery.getRowCount() > 0) {
+			
+				if (getDebugMode()) {
+					System.out.println("Creating objects to launch the process");
+				}
+
+				 //createCase(procName, existingOA, true, true, caseIdH)
+				 ProcessCreateInfo createInfo = new ProcessCreateInfo();
+				 createInfo.setBusinessProcessName(this.getStrProcessName());
+				 createInfo.setVersion(getStrVersion());
+				 createInfo.setIsInitialProcess();
+				 createInfo.setUseLatest(true);
+				 createInfo.setFirstInQuantity(false);
+				 createInfo.setStart(true);
+
+				if (getDebugMode()) {
+					System.out.println("ProcessCreateInfo:" + createInfo.toString());
+				}
+
+				 
+				 //OmsBpaCase cse = (OmsBpaCase)ActivityManager.getInstance().createProcessInstance(createInfo);
+				 BusinessProcess bproc = null;
+				 bproc.setId((String)sqlQuery.getValue(1, 1));
+				 bproc.setName((String)sqlQuery.getValue(1, 3));				
+				 bproc.setStatus(ProcessStatus.valueOf((Integer)sqlQuery.getValue(1, 7)));
+				 bproc.setDefinitionVersion((Integer)sqlQuery.getValue(1, 8));
+				 bproc.setFocusKind(FocusKind.valueOf((Integer)sqlQuery.getValue(1, 9)));
+				 bproc.setFocusType((String)sqlQuery.getValue(1, 10));
+				 //bproc.setDynamicInstantiation(true);
+				 bproc.setSubclassingPolicyName("default");
+				 
+				if (getDebugMode()) {
+					System.out.println("BusinessProcess:" + bproc.toString());
+				}
+
+				 
+				 RootCreateInfo info = new RootCreateInfo();
+				 info.setMakeBeginStepInstAvailable(false);
+				 
+				 ProcInstManager piMgr = ProcInstManagerFactory.get();
+				 
+				if (getDebugMode()) {
+						System.out.println("ProcInstManager:" + piMgr.toString());
+				}
+
+				 
+				 BaseProcInst procInst = null;				 
+				 // Lanzamos el proceso
+				 procInst = (BaseProcInst) piMgr.createRootProcInst(bproc, null, info);
+
+				 if (procInst != null) {
+					if (getDebugMode()) {
+						System.out.println("BaseProcInst:" + procInst.toString());
+					}
+				 
+				 
+					//Asignamos el proceso a la OA
+					existingOA.assignProcessInstanceId(procInst.getId(), true);
+					createInfo.setProcessObject(existingOA);
+					
+					OmsBpaCase caseObj = (OmsBpaCase) procInst;
+					if (getDebugMode()) {
+						System.out.println("OmsBpaCase:" + caseObj.toString());
+					}
+					
+					caseObj.setLastUpdatedBy(session.getLogicalServerName());
+				 
+					ProcInstTraversal traversal = piMgr.createProcInstTraversal(procInst);
+					if (getDebugMode()) {
+						System.out.println("ProcInstTraversal:" + traversal.toString());
+					}
+				 
+					
+					if (initSubProcesses(procInst, traversal, createInfo) != 0) {
+						if (getDebugMode()) {
+							System.out.println("ERROR initializing subprocess");
+						}
+						return caseIdH;	
+					};
+
+
+					BaseStepInst stepInst = (BaseStepInst) procInst.getBeginStepInst();
+					stepInst.setReferenceText(stepInst.getId());
+				 
+					if (getDebugMode()) {
+						System.out.println("BaseStepInst:" + stepInst.toString());
+					}
+					
+					
+					if (stepInst.getStep() instanceof MilestoneStep ) {
+						Step st = stepInst.getStep();
+					 
+						Milestone m = null;
+						m.setStepInstanceId(stepInst.getId());
+						m.setProcessObject(existingOA);
+						m.setMilestoneStatus(MilestoneStatusTP.IN);
+						m.setMilestoneType(((MilestoneStep) st).getMilestoneType());
+						m.setIndex(0);
+						m.setConfiguration(existingOA.getConfiguration());
+					 
+						m.initiateAchievementDate(null);
+						m.initiateReachingDate(null);
+						m.initiateEarlyDate(null);
+						m.setDueDate(null);
+					 
+						existingOA.addMilestone(m);
+						if (getDebugMode()) {
+							System.out.println("Milestone:" + m.toString());
+						}
+						
+					}
+				 
+					try {
+						 procInst.startRootProcInst(); 
+						 existingOA.setIsProcessStarted(true);
+						 
+						 caseIdH.value = caseObj.getId();
+						 
+						 if (getDebugMode()) {
+							System.out.println("CaseId generated: " + caseObj.getId());
+						}
+
+					}catch (Exception e) {
+						 if (getDebugMode()) {
+							 System.out.println("ERROR Exception: " + e.toString());
+						 }
+
+						 return caseIdH;
+					 }
+					 
+				 }else{
+
+					if (getDebugMode()) {
+						System.out.println("ERROR ProcInst not created");
+					}
+
+					 
+				 }
+			}
+		}catch(Exception e) {
+			 if (getDebugMode()) {
+				 System.out.println("ERROR Generic Exception: " + e.toString());
+			 }
+
+			 return caseIdH;
+		}
+		finally {
+			sqlQuery.release();
+		}
+		
+		return caseIdH;
+	}	
+
 
 	/** 
 	 * Lanza el proceso asociado a una order action
@@ -757,7 +1006,7 @@ public class LanzaProceso {
 		String caseId = null;
 		StringHolder caseIdH = new StringHolder(caseId);
 
-		Statement sqlQuery = null;
+		CallableStatement sqlQuery = null;
 		ResultSet result = null; 
 		
 		if (getDebugMode()) {
@@ -773,8 +1022,8 @@ public class LanzaProceso {
 			}
 			
 			// Generamos la consulta con los datos del proceso a ejecutar
-			sqlQuery = conn.createStatement();			
-			result = sqlQuery.executeQuery(strQueryBPM.replace("%1", getStrProcessName().replace("%2", getStrVersion())));
+			sqlQuery = (CallableStatement) conn.prepareStatement(strQueryBPM.replace("%1", getStrProcessName().replace("%2", getStrVersion())));			
+			result = sqlQuery.executeQuery();
 			
 			if (result.getFetchSize() > 0) {
 			
@@ -934,64 +1183,69 @@ public class LanzaProceso {
 	}	
 	
 
+
 	/**
 	 * Devuelve un objeto con el detalle del proceso a lanzar
 	 * @param conn
 	 * @param strProcessName
 	 * @return
 	 */
-	private PcProcessDefinition getProcessDetails(Connection conn, String strProcessName) { 
-		
-		PcProcessDefinition pd = (PcProcessDefinition) Factory.Create(PcProcessDefinition.class, IdGen.uniqueId());
-		Statement sqlQuery = null;
-		
-		ResultSet result = null; 
-		if (getDebugMode()) {
-			System.out.println("------------------------------------------------------------------------------------------");
-			System.out.println("Getting process definition details: " + strProcessName);
-		}
-
-		
-		try {
-
-			if (conn == null) {
-				LanzaProceso.openDBConnection("PC"); // abrimos la sesion para PC
-			}
+    private PcProcessDefinition getProcessDetails(Connection conn, String strProcessName) {
+       try {
+		    //++paco
+			DataManager = new DataManagerCls(settingMap);
+			System.out.println("---------------------------");
+			System.out.println("objeto DataManager creado OK");
 			
-			sqlQuery = conn.createStatement();
-			result = sqlQuery.executeQuery(strQueryProcessDef.replace("%1", strProcessName));
-			
-			if (result.getFetchSize() > 0) {
-				
-				//pd.initProperties();
-				//pd.onCreate();
-		  		pd.setcId(result.getString(1));
-		  		pd.setlineOfBusiness(result.getString(4));
-		  		pd.setsalesChannel(result.getString(5));
-		  		pd.setprocessMapAction((ActionType)ActionTypeTP.def.findByCode(result.getString(3)));
-		  		pd.setspecifiedVersionId(result.getInt(2));
-		  		
-			}
-		}catch(Exception e){
-			if (getDebugMode()) {
-				System.out.println("------------------------------------------------------------------------------------------");
-				System.out.println("ERROR getting process definition details: " + e.toString());
-			}
-			return null;
-			
-		}finally{		
-			try {
-				//Liberamos la consulta
-		  		result.close();
-		  		sqlQuery.close();
-			}catch(Exception e) {}
-			
-		}
-		return pd;
-	}
+			dManagerFactory.set(DataManager);
+			System.out.println("---------------------------");
+			System.out.println("DataManagerFactoty inicializado OK con el objeto DataManager");
+		    //--paco			
+			PcProcessDefinitionAug pd = (PcProcessDefinitionAug) PcProcessDefinitionAug.create(IdGen.uniqueId()) ;
+            PreparedStatement sqlQuery = null;           
+            ResultSet result = null;
+            if (getDebugMode()) {
+                System.out.println("------------------------------------------------------------------------------------------");
+                System.out.println("Getting process definition details: " + strProcessName);
+            }            
+            try {    
+                if (conn == null) {
+                    LanzaProceso.openDBConnection("PC"); // abrimos la sesion para PC
+                }                
+                sqlQuery = (PreparedStatement) conn.prepareStatement(strQueryProcessDef.replace("%1", strProcessName));
+                result = sqlQuery.executeQuery();             
+                if (result.getFetchSize() == 1) {
+                      pd.setcId(result.getString(1));
+                      pd.setlineOfBusiness(result.getString(4));
+                      pd.setsalesChannel(result.getString(5));
+                      pd.setprocessMapAction((ActionType)ActionTypeTP.def.findByCode(result.getString(3)));
+                      pd.setspecifiedVersionId(result.getInt(2));
+                      
+                }
+            }catch(Exception e){
+                if (getDebugMode()) {
+                    System.out.println("------------------------------------------------------------------------------------------");
+                    System.out.println("ERROR getting process definition details: " + e.toString());
+                }
+                return null;               
+            }finally{        
+                try {
+                    //Liberamos la consulta
+                      result.close();
+                      sqlQuery.close();
+                }catch(Exception e) {}                
+            }           
+            return (PcProcessDefinition) pd;
+       }catch(Exception e) {
+           if (getDebugMode()) {
+                System.out.println("------------------------------------------------------------------------------------------");
+                System.out.println("Error initializing PcProcessDefinition " + e.toString());
+            }          
+            return null;
+       }
+   }	 
 	
 
-	
 
 	/**
 	 *  Devuelve un objeto con el detalle de la orden obtenido de bbdd
@@ -1001,7 +1255,7 @@ public class LanzaProceso {
 	 */
 	private OmOrder getOmOrderDetails(Connection conn, String orderId) {
 		OmOrder om = null;
-		Statement sqlQuery = null;
+		CallableStatement sqlQuery = null;
 		ResultSet result = null;
 		
 		if (getDebugMode()) {
@@ -1015,13 +1269,27 @@ public class LanzaProceso {
 				LanzaProceso.openDBConnection("OMS"); // abrimos la sesion para OMS
 			}
 			
-	  		om = (OmOrder) OmOrder.create(getStrIDContract());
-	  		om.setclfyOrderIdVal(getStrIDContract());
-
-			sqlQuery =  conn.createStatement();
-			result = sqlQuery.executeQuery(strQueryOmsOrder.replace("%1", orderId));
+			//++paco		
+			DistributedLockManager lockManager = new DistributedLockManager(settingMap);
+			System.out.println("Objeto lockManager creado OK");
+			System.out.println("------------------------------");					
+			LockManagerFactory lmanagerFactory = null;
+			lmanagerFactory.set(lockManager);
+			System.out.println("Asignacion al LockManagerFactory el objeto lockManager OK");
+			System.out.println("------------------------------");			
+			//--paco				
 			
-			if (result.getFetchSize() > 0) {
+	  		om = (OmOrder) OmOrder.create(getStrIDContract());
+			System.out.println("OmOrder.Create OK");
+	  		om.setclfyOrderIdVal(getStrIDContract());
+			System.out.println("setclfyOrderIdVal OK");
+
+
+
+			sqlQuery = (CallableStatement) conn.prepareStatement(strQueryOmsOrder.replace("%1", orderId));
+			result = sqlQuery.executeQuery();
+			
+			if (result.getFetchSize() == 1) {
 
 	  			om.setorderMode((DynOrderMode) DynOrderModeTP.def.findByCode(result.getString(2)));
 	  			om.setgroupId(result.getString(3));
@@ -1153,6 +1421,7 @@ public class LanzaProceso {
 	}
 	
 
+
 	/**
 	 * Recupera los datosde StartOrderInput
 	 * @param sqlQuery  --> consulta sobre OMS
@@ -1163,7 +1432,7 @@ public class LanzaProceso {
 		
 		StartOrderInput sti = new StartOrderInput();
 
-		Statement sqlQuery = null;
+		CallableStatement sqlQuery = null;
 		ResultSet result = null;
 		
 		if (getDebugMode()) {
@@ -1177,8 +1446,8 @@ public class LanzaProceso {
 				LanzaProceso.openDBConnection("OMS"); // abrimos la sesion para OMS
 			}
 
-			sqlQuery =conn.createStatement();
-			result = sqlQuery.executeQuery(strQueryOmsOrder.replace("%1", orderId));
+			sqlQuery = (CallableStatement) conn.prepareStatement(strQueryOmsOrder.replace("%1", orderId));
+			result = sqlQuery.executeQuery();
 			
 			if (result.getFetchSize() > 0) {			
 
@@ -1359,12 +1628,13 @@ public class LanzaProceso {
 		}
 		
 		return sti;
-	}
+	}			
 
 	// GETTERS Y SETTERS
 	public String getStrIDContract() {
 		return strIDContract;
 	}
+	
 	public void setStrIDContract(String strObjidContract) {
 		this.strIDContract = strObjidContract;
 	}
@@ -1386,7 +1656,6 @@ public class LanzaProceso {
 	public void setStrObjidLanzado(String strObjidLanzado) {
 		this.strObjidLanzado = strObjidLanzado;
 	}
-
 	protected OmOrder getOrder() {
 		return order;
 	}
